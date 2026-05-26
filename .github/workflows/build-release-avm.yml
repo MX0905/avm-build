@@ -1,20 +1,14 @@
-name: Build Official AVM (Linux)
+name: Build AVM (Linux)
 
+# 仅允许手动点击运行
 on:
-  workflow_dispatch:
-  push:
-    tags:
-      - 'research-v*'
-
-env:
-  TAG_NAME: ${{ github.ref_name }}
+  workflow_dispatch
 
 jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
       release_date: ${{ steps.date.outputs.DATE }}
-      tag: ${{ env.TAG_NAME }}
 
     steps:
       - name: Get current date
@@ -25,25 +19,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: AOMediaCodec/avm
-          ref: ${{ env.TAG_NAME }}
+          ref: main
           fetch-depth: 0
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt update -y
           sudo apt install -y build-essential cmake git nasm
 
-      - name: Configure and build
+      - name: Build AVM
         run: |
           mkdir -p avm_build
           cd avm_build
           cmake .. -DCMAKE_BUILD_TYPE=Release
           make -j$(nproc)
 
-      # ==========================================
-      # 【你指定的路径：avm_build/avmenc 和 avm_build/avmdec】
-      # ==========================================
-      - name: Copy binaries to root
+      # 复制你指定的文件：avm_build/avmenc 和 avm_build/avmdec
+      - name: Copy binaries
         run: |
           cp avm_build/avmenc .
           cp avm_build/avmdec .
@@ -56,10 +48,13 @@ jobs:
             avmenc
             avmdec
 
+  # 自动发布 Release
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/research-v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
       - name: Download binaries
         uses: actions/download-artifact@v4
@@ -69,7 +64,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.build.outputs.tag }}
+          tag_name: avm_linux_${{ needs.build.outputs.release_date }}
           name: avm_linux_${{ needs.build.outputs.release_date }}
           body: |
             AVM Linux 编译产物
