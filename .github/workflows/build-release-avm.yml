@@ -1,0 +1,89 @@
+name: Build Official AVM (Linux)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'research-v*'
+
+env:
+  TAG_NAME: ${{ github.ref_name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.calc_version.outputs.VERSION }}
+      tag: ${{ env.TAG_NAME }}
+
+    steps:
+      - name: Calculate version number
+        id: calc_version
+        run: |
+          if [[ "$TAG_NAME" == research-v* ]]; then
+            VERSION=${TAG_NAME#research-v}
+          else
+            VERSION=unknown
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Clone official AOMediaCodec/avm
+        uses: actions/checkout@v4
+        with:
+          repository: AOMediaCodec/avm
+          ref: ${{ env.TAG_NAME }}
+          fetch-depth: 0
+
+      - name: Install official build dependencies
+        run: |
+          sudo apt update -y
+          sudo apt install -y cmake git perl yasm nasm build-essential
+
+      - name: CMake configure & make (Release)
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Organize output
+        run: |
+          mkdir -p AVM-Linux-${{ steps.calc_version.outputs.VERSION }}
+          cp build/avmbuild/apps/avmenc AVM-Linux-${{ steps.calc_version.outputs.VERSION }}/
+          cp build/avmbuild/apps/avmdec AVM-Linux-${{ steps.calc_version.outputs.VERSION }}/
+
+      - name: Zip package
+        run: |
+          zip -r AVM-Linux-${{ steps.calc_version.outputs.VERSION }}.zip AVM-Linux-${{ steps.calc_version.outputs.VERSION }}/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AVM-Linux-${{ steps.calc_version.outputs.VERSION }}
+          path: AVM-Linux-${{ steps.calc_version.outputs.VERSION }}.zip
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/research-v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download zip
+        uses: actions/download-artifact@v4
+        with:
+          name: AVM-Linux-${{ needs.build.outputs.version }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: AVM ${{ needs.build.outputs.version }} (Linux)
+          body: |
+            ### AVM 编码器 Linux 版本 ${{ needs.build.outputs.version }}
+            官方仓库：AOMediaCodec/avm
+            编译分支：${{ needs.build.outputs.tag }}
+            构建系统：CMake Release + make -j$(nproc)
+          # 关键：用 | 换行字符串，不用列表，编辑器不红
+          files: |
+            AVM-Linux-${{ needs.build.outputs.version }}.zip
+          draft: false
+          prerelease: false
