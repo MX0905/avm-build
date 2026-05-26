@@ -1,5 +1,6 @@
 name: Build Official AVM (Linux)
 
+# 触发规则
 on:
   workflow_dispatch:
   push:
@@ -17,6 +18,7 @@ jobs:
       tag: ${{ env.TAG_NAME }}
 
     steps:
+      # 计算版本号
       - name: Calculate version number
         id: calc_version
         run: |
@@ -27,6 +29,7 @@ jobs:
           fi
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
+      # 拉取 AVM 官方源码
       - name: Clone official AOMediaCodec/avm
         uses: actions/checkout@v4
         with:
@@ -34,40 +37,48 @@ jobs:
           ref: ${{ env.TAG_NAME }}
           fetch-depth: 0
 
-      - name: Install official build dependencies
+      # 安装编译依赖（和本地一致）
+      - name: Install build dependencies
         run: |
           sudo apt update -y
-          sudo apt install -y cmake git perl yasm nasm build-essential
+          sudo apt install -y build-essential cmake git nasm
 
-      - name: CMake configure & make (Release)
+      # 创建编译目录 avm_build
+      - name: Create build directory
         run: |
-          mkdir build
-          cd build
+          mkdir -p avm_build
+
+      # CMake 配置（原生配置，不修改输出路径）
+      - name: CMake configure
+        run: |
+          cd avm_build
           cmake .. -DCMAKE_BUILD_TYPE=Release
+
+      # 多线程编译
+      - name: Compile with make
+        run: |
+          cd avm_build
           make -j$(nproc)
 
-      - name: Organize output
+      # 打包：直接压缩整个 avm_build 目录
+      - name: Zip full build directory
         run: |
-          mkdir -p AVM-Linux-${{ steps.calc_version.outputs.VERSION }}
-          cp build/avmbuild/apps/avmenc AVM-Linux-${{ steps.calc_version.outputs.VERSION }}/
-          cp build/avmbuild/apps/avmdec AVM-Linux-${{ steps.calc_version.outputs.VERSION }}/
+          zip -r AVM-Linux-${{ steps.calc_version.outputs.VERSION }}.zip avm_build/
 
-      - name: Zip package
-        run: |
-          zip -r AVM-Linux-${{ steps.calc_version.outputs.VERSION }}.zip AVM-Linux-${{ steps.calc_version.outputs.VERSION }}/
-
+      # 上传压缩包为制品
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: AVM-Linux-${{ steps.calc_version.outputs.VERSION }}
           path: AVM-Linux-${{ steps.calc_version.outputs.VERSION }}.zip
 
+  # 标签触发时自动创建 Release
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/research-v')
     runs-on: ubuntu-latest
     steps:
-      - name: Download zip
+      - name: Download zip package
         uses: actions/download-artifact@v4
         with:
           name: AVM-Linux-${{ needs.build.outputs.version }}
@@ -78,11 +89,10 @@ jobs:
           tag_name: ${{ needs.build.outputs.tag }}
           name: AVM ${{ needs.build.outputs.version }} (Linux)
           body: |
-            ### AVM 编码器 Linux 版本 ${{ needs.build.outputs.version }}
+            ### AVM 编译包 Linux 版本 ${{ needs.build.outputs.version }}
             官方仓库：AOMediaCodec/avm
-            编译分支：${{ needs.build.outputs.tag }}
-            构建系统：CMake Release + make -j$(nproc)
-          # 关键：用 | 换行字符串，不用列表，编辑器不红
+            编译标签：${{ needs.build.outputs.tag }}
+            内容：完整 avm_build 编译目录，可自行检查产物
           files: |
             AVM-Linux-${{ needs.build.outputs.version }}.zip
           draft: false
