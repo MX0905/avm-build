@@ -1,0 +1,163 @@
+name: Build AVM Windows MinGW
+on:
+  workflow_dispatch:
+    inputs:
+      timeout_min:
+        type: number
+        default: 660
+        description: 编译超时时长
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  win64_build:
+    name: Windows x64 MinGW 编译
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ github.event.inputs.timeout_min }}
+    container: ubuntu:24.04
+    strategy:
+      matrix:
+        cfg:
+          - rtcd
+          - no-rtcd
+          - encode-only
+          - decode-only
+          - nasm
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/ccache
+      CMAKE_BUILD_PARALLEL_LEVEL: 16
+
+    steps:
+      # 1. 拉取 AVM 源码（核心拉库动作）
+      - name: 拉取源码
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          lfs: true
+
+      # 2. 安装 MinGW 交叉编译依赖
+      - name: 安装编译环境
+        run: |
+          apt update -y
+          apt install -y gcc-mingw-w64 g++-mingw-w64 ninja-build cmake ccache git
+
+      # 3. 清理缓存统计
+      - name: 初始化缓存
+        run: ccache --zero-stats
+
+      # 4. 拼接编译参数
+      - name: 配置编译参数
+        run: |
+          EXTRA_FLAGS="-DCONFIG_ML_PART_SPLIT=0 -DCONFIG_DIP_EXT_PRUNING=0"
+          TOOLCHAIN="cmake/toolchains/x86_64-mingw-gcc.cmake"
+          case ${{ matrix.cfg }} in
+            rtcd)
+              ADD_FLAGS="-DCONFIG_RUNTIME_CPU_DETECT=1"
+              ;;
+            no-rtcd)
+              ADD_FLAGS="-DCONFIG_RUNTIME_CPU_DETECT=0"
+              ;;
+            encode-only)
+              ADD_FLAGS="-DCONFIG_AV2_DECODER=0"
+              ;;
+            decode-only)
+              ADD_FLAGS="-DCONFIG_AV2_ENCODER=0"
+              ;;
+            nasm)
+              ADD_FLAGS="-DENABLE_NASM=1"
+              ;;
+            *)
+              ADD_FLAGS=""
+              ;;
+          esac
+          echo "CMAKE_ARGS=-DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN} ${EXTRA_FLAGS} ${ADD_FLAGS}" >> $GITHUB_ENV
+
+      # 5. CMake 构建
+      - name: 编译构建
+        run: |
+          cmake -B build_win64 -S . -GNinja \
+            -DENABLE_CCACHE=1 \
+            -DENABLE_DOCS=0 \
+            ${CMAKE_ARGS}
+          cmake --build build_win64 -j16
+          DESTDIR=./install_win64 cmake --install build_win64 --strip
+
+      # 6. 上传编译产物
+      - name: 上传Windows程序
+        uses: actions/upload-artifact@v7
+        with:
+          name: avm-win64-${{ matrix.cfg }}
+          path: install_win64/
+          retention-days: 3
+
+  win32_build:
+    name: Windows x86 MinGW 编译
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ github.event.inputs.timeout_min }}
+    container: ubuntu:24.04
+    strategy:
+      matrix:
+        cfg:
+          - rtcd
+          - no-rtcd
+          - encode-only
+          - decode-only
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/ccache
+      CMAKE_BUILD_PARALLEL_LEVEL: 16
+
+    steps:
+      - name: 拉取源码
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          lfs: true
+
+      - name: 安装编译环境
+        run: |
+          apt update -y
+          apt install -y gcc-mingw-w64 g++-mingw-w64 ninja-build cmake ccache
+
+      - name: 初始化缓存
+        run: ccache --zero-stats
+
+      - name: 配置编译参数
+        run: |
+          EXTRA_FLAGS="-DCONFIG_ML_PART_SPLIT=0 -DCONFIG_DIP_EXT_PRUNING=0"
+          TOOLCHAIN="cmake/toolchains/x86-mingw-gcc.cmake"
+          case ${{ matrix.cfg }} in
+            rtcd)
+              ADD_FLAGS="-DCONFIG_RUNTIME_CPU_DETECT=1"
+              ;;
+            no-rtcd)
+              ADD_FLAGS="-DCONFIG_RUNTIME_CPU_DETECT=0"
+              ;;
+            encode-only)
+              ADD_FLAGS="-DCONFIG_AV2_DECODER=0"
+              ;;
+            decode-only)
+              ADD_FLAGS="-DCONFIG_AV2_ENCODER=0"
+              ;;
+            *)
+              ADD_FLAGS=""
+              ;;
+          esac
+          echo "CMAKE_ARGS=-DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN} ${EXTRA_FLAGS} ${ADD_FLAGS}" >> $GITHUB_ENV
+
+      - name: 编译构建
+        run: |
+          cmake -B build_win32 -S . -GNinja \
+            -DENABLE_CCACHE=1 \
+            -DENABLE_DOCS=0 \
+            ${CMAKE_ARGS}
+          cmake --build build_win32 -j16
+          DESTDIR=./install_win32 cmake --install build_win32 --strip
+
+      - name: 上传Windows程序
+        uses: actions/upload-artifact@v7
+        with:
+          name: avm-win32-${{ matrix.cfg }}
+          path: install_win32/
+          retention-days: 3
